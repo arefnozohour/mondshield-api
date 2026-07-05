@@ -15,6 +15,12 @@
 
     <!-- Cross-cutting abstractions -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+
+    <!-- Background jobs -->
+    <PackageVersion Include="Hangfire.Core" Version="1.8.23" />
+    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.23" />
+    <PackageVersion Include="Hangfire.PostgreSql" Version="1.21.1" />
 
     <!-- API tooling -->
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />

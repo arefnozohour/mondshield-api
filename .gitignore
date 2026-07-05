@@ -33,7 +33,7 @@ TestResults/
 _ReSharper*/
 
 ## Secrets / local config
-appsettings.*.local.json
+appsettings.*.json
 secrets.json
 *.env
 

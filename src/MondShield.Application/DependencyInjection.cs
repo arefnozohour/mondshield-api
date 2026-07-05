@@ -1,4 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using MondShield.Application.Accounts;
+using MondShield.Application.Compensation;
+using MondShield.Application.Onboarding;
+using MondShield.Application.Withdrawals;
 
 namespace MondShield.Application;
 
@@ -10,7 +14,11 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
-        // Reserved for use-case handlers / validators as the application layer grows.
+        services.AddScoped<IOnboardingService, OnboardingService>();
+        services.AddScoped<ICompensationService, CompensationService>();
+        services.AddScoped<IPayoutService, PayoutService>();
+        services.AddScoped<IProfitWithdrawalService, ProfitWithdrawalService>();
+        services.AddScoped<IAccountActivityService, AccountActivityService>();
         return services;
     }
 }

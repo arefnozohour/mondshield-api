@@ -2,7 +2,43 @@
 
   <PropertyGroup>
     <UserSecretsId>e5d161c2-635b-4d28-bec0-4759ff1b0b1d</UserSecretsId>
+    <!-- The MT5 native manager DLLs are x64-only, so the host process must run as x64. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- We ship a framework-dependent app; don't self-contain just because an RID is set. -->
+    <SelfContained>false</SelfContained>
   </PropertyGroup>
+
+  <!--
+    MT5 Manager API — the managed wrappers must be referenced here (not just in Infrastructure):
+    a raw file <Reference> doesn't flow transitively to this output project, and a loose DLL
+    copied via <None> lands in bin but ISN'T in .deps.json, so .NET's assembly resolver can't
+    find it at runtime (unlike .NET Framework's directory probing). Referencing them here puts
+    them in deps.json AND copies them next to the exe.
+  -->
+  <ItemGroup>
+    <Reference Include="MetaQuotes.MT5ManagerAPI64">
+      <HintPath>..\..\libs\mt5\MetaQuotes.MT5ManagerAPI64.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MetaQuotes.MT5CommonAPI64">
+      <HintPath>..\..\libs\mt5\MetaQuotes.MT5CommonAPI64.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Native MT5 DLLs are NOT .NET assemblies — they don't belong in deps.json and are loaded by
+    the managed wrapper via SMTManagerAPIFactory.Initialize(<app dir>). Just copy them next to
+    the exe (the CPU-appropriate variant — base / avx / avx2 / arm — is auto-selected at runtime).
+  -->
+  <ItemGroup>
+    <None Include="..\..\libs\mt5\MT5APIManager64*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Swashbuckle.AspNetCore" />

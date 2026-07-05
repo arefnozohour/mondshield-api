@@ -17,4 +17,7 @@ public interface IIdentityService
 
     /// <summary>Invalidate the current refresh token for a user (logout / revoke).</summary>
     Task<Result> RevokeRefreshTokenAsync(Guid userId, CancellationToken ct = default);
+
+    /// <summary>Non-sensitive identity projection for a user. Null if not found.</summary>
+    Task<UserSummary?> GetUserSummaryAsync(Guid userId, CancellationToken ct = default);
 }

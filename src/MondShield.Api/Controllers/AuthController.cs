@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MondShield.Api.Contracts;
 using MondShield.Application.Authentication.Dtos;
 using MondShield.Application.Common.Interfaces;
+using MondShield.Application.Onboarding;
 using MondShield.Domain.Authorization;
 
 namespace MondShield.Api.Controllers;
@@ -12,51 +14,61 @@ namespace MondShield.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     private readonly IIdentityService _identityService;
+    private readonly IOnboardingService _onboardingService;
     private readonly ICurrentUser _currentUser;
 
-    public AuthController(IIdentityService identityService, ICurrentUser currentUser)
+    public AuthController(IIdentityService identityService, IOnboardingService onboardingService, ICurrentUser currentUser)
     {
         _identityService = identityService;
+        _onboardingService = onboardingService;
         _currentUser = currentUser;
     }
 
-    /// <summary>Register a new trader account (assigned the User role) and return a token pair.</summary>
+    /// <summary>
+    /// Register a new trader account (assigned the User role), create their MondShield
+    /// account (starting at PendingKyc), and return a token pair.
+    /// </summary>
     [HttpPost("register")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(AuthResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<AuthResult>> Register([FromBody] RegisterRequest request, CancellationToken ct)
     {
         var result = await _identityService.RegisterAsync(request, ct);
-        return result.Succeeded
-            ? Ok(result.Value)
-            : BadRequest(new { errors = result.Errors });
+        if (!result.Succeeded)
+        {
+            return BadRequest(new ErrorResponse(result.Errors));
+        }
+
+        await _onboardingService.CreateAccountForNewUserAsync(result.Value!.UserId, ct);
+
+        return Ok(result.Value);
     }
 
     /// <summary>Email + password login.</summary>
     [HttpPost("login")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(AuthResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<AuthResult>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
         var result = await _identityService.LoginAsync(request, ct);
         return result.Succeeded
             ? Ok(result.Value)
-            : Unauthorized(new { errors = result.Errors });
+            : Unauthorized(new ErrorResponse(result.Errors));
     }
 
     /// <summary>Exchange a valid refresh token for a fresh access/refresh token pair.</summary>
     [HttpPost("refresh")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(AuthResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request, CancellationToken ct)
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<AuthResult>> Refresh([FromBody] RefreshRequest request, CancellationToken ct)
     {
         var result = await _identityService.RefreshAsync(request, ct);
         return result.Succeeded
             ? Ok(result.Value)
-            : Unauthorized(new { errors = result.Errors });
+            : Unauthorized(new ErrorResponse(result.Errors));
     }
 
     /// <summary>Revoke the caller's active refresh token (logout).</summary>
@@ -78,20 +90,21 @@ public sealed class AuthController : ControllerBase
     /// <summary>Return the authenticated caller's identity context.</summary>
     [HttpGet("me")]
     [Authorize(Policy = Policies.AuthenticatedUser)]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AuthMeResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public IActionResult Me()
+    public async Task<ActionResult<AuthMeResponse>> Me(CancellationToken ct)
     {
-        if (!_currentUser.IsAuthenticated)
+        if (!_currentUser.IsAuthenticated || _currentUser.UserId is not { } userId)
         {
             return Unauthorized();
         }
 
-        return Ok(new
-        {
-            userId = _currentUser.UserId,
-            email = _currentUser.Email,
-            isAdmin = _currentUser.IsInRole(Roles.Admin),
-        });
+        // FullName isn't a JWT claim (the token stays minimal), so look it up.
+        var summary = await _identityService.GetUserSummaryAsync(userId, ct);
+        return Ok(new AuthMeResponse(
+            userId,
+            _currentUser.Email ?? summary?.Email,
+            summary?.FullName,
+            _currentUser.IsInRole(Roles.Admin)));
     }
 }

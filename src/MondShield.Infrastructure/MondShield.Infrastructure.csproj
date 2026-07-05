@@ -9,6 +9,24 @@
     <ProjectReference Include="..\MondShield.Domain\MondShield.Domain.csproj" />
   </ItemGroup>
 
+  <!--
+    MT5 Manager API — managed P/Invoke wrappers (vendored in libs/mt5; not on NuGet). Verified
+    loadable under .NET 10. Private=true copies them to any consumer's output (so they reach the
+    API's bin next to the native MT5APIManager64*.dll the API project copies). x64-only: the API
+    process must run as x64 (set in MondShield.Api.csproj). Only used by Mt5ManagerClient, which
+    is registered instead of the stub when Mt5:Mode=Live.
+  -->
+  <ItemGroup>
+    <Reference Include="MetaQuotes.MT5ManagerAPI64">
+      <HintPath>..\..\libs\mt5\MetaQuotes.MT5ManagerAPI64.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MetaQuotes.MT5CommonAPI64">
+      <HintPath>..\..\libs\mt5\MetaQuotes.MT5CommonAPI64.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
@@ -19,6 +37,9 @@
     <PackageReference Include="EFCore.NamingConventions" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+    <PackageReference Include="Hangfire.Core" />
+    <PackageReference Include="Hangfire.AspNetCore" />
+    <PackageReference Include="Hangfire.PostgreSql" />
   </ItemGroup>
 
 </Project>

@@ -98,6 +98,12 @@ public sealed class IdentityService : IIdentityService
         return Result.Success();
     }
 
+    public async Task<UserSummary?> GetUserSummaryAsync(Guid userId, CancellationToken ct = default) =>
+        await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new UserSummary(u.Id, u.Email, u.FullName, u.Role.ToString()))
+            .FirstOrDefaultAsync(ct);
+
     private bool VerifyPassword(AppUser user, string password)
     {
         var outcome = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, password);
@@ -125,6 +131,7 @@ public sealed class IdentityService : IIdentityService
         {
             UserId = user.Id,
             Email = user.Email,
+            FullName = user.FullName,
             AccessToken = access.Token,
             AccessTokenExpiresAt = access.ExpiresAtUtc,
             RefreshToken = refreshToken,

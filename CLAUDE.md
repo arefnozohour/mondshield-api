@@ -17,6 +17,25 @@ on profit withdrawals, and processes compensation requests on a fixed monthly sc
 the compensation ticket flow, and the broker profit-share calculation. We are **NOT** building
 trading, order execution, buy/sell, or charting. Those live in MT5 itself.
 
+## Onboarding & account provisioning (we CREATE the MT5 account, not link it)
+
+The trader does NOT bring an existing MT5 account. Our system provisions a fresh MT5 trading
+account for them via the Manager API. Order of onboarding:
+
+1. **Sign up** — email, password, email verification.
+2. **KYC review** — admin approves the trader's identity. Nothing else unlocks until this passes.
+3. **Provision MT5 account** — backend calls the Manager API create-user operation, receives the
+   new MT5 login, and stores it against the trader's profile. The trader never enters an MT5 login.
+   - Provisioning happens only AFTER KYC approval (never create a trading account for an
+     unverified user).
+   - New accounts are created into a specific MT5 **group** (sets leverage, permissions, symbol
+     set) — this group name is configuration, NOT hardcoded.
+   > ❓ OPEN QUESTION: is provisioning automatic on KYC approval, or a deliberate admin action?
+   > Modelled as a discrete step so it can be either; default to admin-triggered for a final
+   > human checkpoint before a real trading account exists.
+4. **Activate: deposit $2,000** — trader deposits into their newly provisioned MT5 account;
+   admin confirms the deposit in MT5 → account becomes ACTIVE at Stage 1.
+
 ## Stack decisions (do not deviate without asking)
 
 - **Backend:** .NET 10 (current LTS), ASP.NET Core Web API (full C#/.NET — single backend, no separate gateway)
@@ -44,12 +63,18 @@ Manager API DLL is Windows-native. Do not assume Linux/Docker-on-Linux hosting f
   settings (TargetFramework, Nullable, ImplicitUsings) live in `Directory.Build.props`. Do not put a
   `Version=` on a PackageReference, and do not hardcode `TargetFramework` in individual csproj files.
 - **Schema (early dev — NO migrations yet):** the model is the source of truth. On startup in
-  Development the API calls `EnsureCreated()` to build the schema directly from the entities, then
-  seeds the bootstrap admin. With `Database:RecreateOnStartup=true` (default in
-  `appsettings.Development.json`) it drops & rebuilds every run, so entity changes are picked up
-  automatically — do NOT write a migration for each change during this phase. `EnsureCreated()`
-  alone does not alter an existing schema, which is why recreate-on-startup is on.
-  Set `RecreateOnStartup=false` to keep data between runs (then drop the DB manually after a model change).
+  Development the API builds the schema directly from the entities, then seeds the bootstrap
+  admin. With `Database:RecreateOnStartup=true` (default in `appsettings.Development.json`) it
+  drops & rebuilds every run, so entity changes are picked up automatically — do NOT write a
+  migration for each change during this phase. Set `RecreateOnStartup=false` to keep data
+  between runs (then drop the schema manually after a model change).
+  - **Not plain `EnsureCreated()`:** Hangfire lives in the same Postgres database (its own
+    `hangfire` schema — see Background jobs below). `EnsureCreated()`'s "does this database
+    already have tables" check is NOT schema-scoped, so once Hangfire's tables exist it wrongly
+    concludes our schema already exists and silently skips creating it. `Program.cs` instead:
+    drops/recreates only the `public` schema (leaving `hangfire` untouched), checks
+    `information_schema.tables` filtered to `table_schema = 'public'` directly, and if empty
+    runs `db.Database.GenerateCreateScript()` itself. Keep this pattern if you touch that code.
 - **Migrations (later, before production):** `dotnet-ef` is already a local tool
   (`.config/dotnet-tools.json`). When ready, switch startup to `MigrateAsync()`, generate the first
   migration into `MondShield.Infrastructure/Persistence/Migrations` (API is the startup project):
@@ -188,22 +213,27 @@ The local ledger is the source of truth on our side; MT5 is reconciled against i
 - **LedgerEntry** — every credit/debit + which composition bucket it affects
 - **ProfitWithdrawal** — requested amount, profit portion, broker share, net to trader
 - **CompensationCapTracker** — per-person lifetime total against the $5,000 cap
-- **MT5 wrapper interface** — minimal surface: read balance/equity, read trade history &
-  commission, credit balance. Behind an interface in Application so it can be stubbed.
+- **MT5 wrapper interface** — minimal surface: create account (provisioning, into the configured
+  group), read balance/equity, read trade history & commission, credit balance. Behind an
+  interface in Application so it can be stubbed.
 
 ## Build order
 1. Domain: stage config table, stage machine (up + down), loss-coverage math, profit-share
    math, cap logic, balance-composition logic — pure and deterministic, matching the worked
    examples in this file.
 2. Persistence + EF Core migrations (schema, audit + ledger + cap-tracker tables).
-3. MT5 wrapper — stub first (fake balances + commission), integrate without a live server.
-4. Compensation ticket flow end-to-end against the stub.
-5. Scheduler — qualifying-loss detection + 27th/28th Hangfire payout job + down-transition.
-6. Profit-withdrawal flow — compute share, create manual-withdrawal worklist item.
-7. Admin panel — review queue, approve/reject, payout trigger, manual-withdrawal worklist,
-   cap monitoring.
-8. User panel — account status, stage, balance composition, submit request, history.
-9. Swap MT5 stub for the real DLL; validate against a demo MT5 server.
+3. MT5 wrapper — stub first (fake create-account, balances + commission), integrate without a
+   live server.
+4. Onboarding flow — signup → KYC approval → MT5 account provisioning (against the stub) →
+   deposit activation.
+5. Compensation ticket flow end-to-end against the stub.
+6. Scheduler — qualifying-loss detection + 27th/28th Hangfire payout job + down-transition.
+7. Profit-withdrawal flow — compute share, create manual-withdrawal worklist item.
+8. Admin panel — KYC queue, provisioning step, deposit confirmation, review queue,
+   approve/reject, payout trigger, manual-withdrawal worklist, cap monitoring.
+9. User panel — onboarding status, account status, stage, balance composition, submit request,
+   history.
+10. Swap MT5 stub for the real DLL; validate against a demo MT5 server.
 
 ## Repository layout
 - This is the **backend repo** (`mondshield-api`). The frontend lives in a SEPARATE repo
@@ -230,6 +260,8 @@ The local ledger is the source of truth on our side; MT5 is reconciled against i
   read, balance ops, commission/history) to confirm the actual API surface.
 
 ## Open questions to confirm with the broker
+- Is MT5 account provisioning automatic on KYC approval, or a deliberate admin action? (modelled as a step)
+- Which MT5 group should provisioned MondShield accounts be created into? (config value)
 - Is the $5,000 compensation cap lifetime or per-request? (modelled as lifetime)
 - Does a down-transition from Stage 2/3/VIP go straight to Rebuild, skipping stages? (modelled yes)
 - Exact definition of "total trading loss" for coverage (realized vs. drawdown vs. net).

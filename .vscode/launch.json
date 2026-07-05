@@ -1,12 +1,14 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
+
     {
       "name": "MondShield API (http)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/MondShield.Api/bin/Debug/net10.0/MondShield.Api.dll",
+      "program": "${workspaceFolder}/src/MondShield.Api/bin/Debug/net10.0/win-x64/MondShield.Api.dll",
       "args": [],
       "cwd": "${workspaceFolder}/src/MondShield.Api",
       "stopAtEntry": false,
