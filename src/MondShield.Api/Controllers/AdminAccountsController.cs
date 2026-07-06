@@ -100,4 +100,22 @@ public sealed class AdminAccountsController : ControllerBase
         var result = await _onboarding.ActivateAsync(accountId, request.DepositAmount, ct);
         return result.Succeeded ? NoContent() : BadRequest(new ErrorResponse(result.Errors));
     }
+
+    /// <summary>
+    /// Confirm the trader met their level-up profit target and advance them one stage up the
+    /// ladder (Revival → Rebuild → Stage1 → Stage2 → Stage3 → VIP). Returns the new stage.
+    /// </summary>
+    [HttpPost("{accountId:guid}/level-up")]
+    [ProducesResponseType(typeof(LevelUpResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<LevelUpResponse>> LevelUp(Guid accountId, CancellationToken ct)
+    {
+        var result = await _onboarding.LevelUpAsync(accountId, ct);
+        return result.Succeeded
+            ? Ok(new LevelUpResponse(result.Value!))
+            : BadRequest(new ErrorResponse(result.Errors));
+    }
 }
+
+/// <summary>The stage an account moved to after a level-up.</summary>
+public sealed record LevelUpResponse(string CurrentStage);

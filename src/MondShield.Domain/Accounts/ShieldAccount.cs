@@ -42,5 +42,10 @@ public class ShieldAccount
     /// Local source-of-truth breakdown of the account's MT5 balance into insured capital,
     /// compensation, profit, and commission. Reconciled against MT5, not derived from it.
     /// </summary>
-    public BalanceComposition Composition { get; set; } = BalanceComposition.Empty;
+    /// <remarks>
+    /// A fresh zero instance per account — NOT the shared <see cref="BalanceComposition.Empty"/>
+    /// singleton: EF Core tracks this owned entity by reference, so two accounts sharing one
+    /// instance makes the second insert throw ("cannot change the principal of an identifying FK").
+    /// </remarks>
+    public BalanceComposition Composition { get; set; } = new(0m, 0m, 0m, 0m);
 }

@@ -219,14 +219,16 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
             throw new InvalidOperationException($"MT5 CreateManager failed: {createRes}.");
         }
 
-        // PUMP_MODE_USERS keeps only user data streamed — enough for the user/balance/deal-request
-        // operations we do, without the memory cost of PUMP_MODE_FULL on a broker-scale server.
+        // PUMP_MODE_NONE: no real-time data streaming. All our operations (UserAdd,
+        // UserAccountRequest, DealRequest, DealerBalance) are request/response calls that don't
+        // need a pump. Any pump mode makes Connect download that data set up front — on a
+        // populated broker server that's slow enough to look like a hang — so we stream nothing.
         var connect = manager.Connect(
             _settings.Server,
             (ulong)_settings.ManagerLogin,
             _settings.ManagerPassword,
             null,
-            CIMTManagerAPI.EnPumpModes.PUMP_MODE_USERS,
+            CIMTManagerAPI.EnPumpModes.PUMP_MODE_NONE,
             _settings.ConnectTimeoutMs);
 
         if (connect != MTRetCode.MT_RET_OK)

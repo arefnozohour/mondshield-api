@@ -12,14 +12,6 @@ using MondShield.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Optional, git-ignored local overrides (see .gitignore). A convenient place to drop
-// machine-specific secrets like the MT5 connection without committing them. Added after the
-// default sources, so it takes precedence over appsettings.json / appsettings.{Environment}.json,
-// user-secrets, and environment variables during local dev. It's never deployed (git-ignored),
-// so in production env vars / real secret stores apply as usual. Absent by default — nothing to
-// do if you use user-secrets or env vars instead.
-builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
-
 const string WebDevCorsPolicy = "WebDev";
 
 builder.Services.AddControllers();

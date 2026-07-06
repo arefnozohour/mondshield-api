@@ -34,6 +34,7 @@ _ReSharper*/
 
 ## Secrets / local config
 appsettings.*.json
+appsettings.json
 secrets.json
 *.env
 

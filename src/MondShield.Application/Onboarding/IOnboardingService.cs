@@ -27,6 +27,15 @@ public interface IOnboardingService
     /// Fails if <paramref name="depositAmount"/> doesn't meet the $2,000 activation requirement.
     /// </summary>
     Task<Result> ActivateAsync(Guid accountId, decimal depositAmount, CancellationToken ct = default);
+
+    /// <summary>
+    /// Admin confirms the trader met their stage's level-up profit target and advances them one
+    /// stage (up the ladder: Revival → Rebuild → Stage1 → Stage2 → Stage3 → VIP). This is an admin
+    /// action because the app doesn't poll MT5 trade history to verify the target itself — the
+    /// admin confirms it, the same way they confirm the activation deposit. Fails if the account
+    /// isn't Active, or is already at the top (VIP). Returns the new stage.
+    /// </summary>
+    Task<Result<string>> LevelUpAsync(Guid accountId, CancellationToken ct = default);
 }
 
 /// <summary>The MT5 login and one-time credentials from provisioning, shown to the admin once.</summary>

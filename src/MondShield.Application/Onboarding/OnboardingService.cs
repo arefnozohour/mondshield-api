@@ -111,4 +111,40 @@ public sealed class OnboardingService : IOnboardingService
         await _accounts.SaveChangesAsync(ct);
         return Result.Success();
     }
+
+    public async Task<Result<string>> LevelUpAsync(Guid accountId, CancellationToken ct = default)
+    {
+        var account = await _accounts.GetByIdAsync(accountId, ct);
+        if (account is null)
+        {
+            return Result<string>.Failure("Account not found.");
+        }
+
+        if (account.Status != AccountStatus.Active || account.CurrentStage is not { } currentStage)
+        {
+            return Result<string>.Failure("Account must be active to level up.");
+        }
+
+        // Admin confirms the profit target was met (the app doesn't poll trades to verify it).
+        var transition = StageMachine.ResolveUp(currentStage, profitTargetMet: true);
+        if (!transition.Moved)
+        {
+            return Result<string>.Failure(transition.Reason);
+        }
+
+        account.CurrentStage = transition.To;
+
+        await _accounts.AddStageTransitionAsync(new StageTransitionRecord
+        {
+            AccountId = account.Id,
+            From = transition.From,
+            To = transition.To,
+            Direction = transition.Direction,
+            Exited = false,
+            Reason = transition.Reason,
+        }, ct);
+
+        await _accounts.SaveChangesAsync(ct);
+        return Result<string>.Success(transition.To.ToString());
+    }
 }
