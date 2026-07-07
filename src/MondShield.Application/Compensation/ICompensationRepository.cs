@@ -22,6 +22,13 @@ public interface ICompensationRepository
     /// <summary>Approved requests whose scheduled payout date has arrived — what the payout job processes.</summary>
     Task<IReadOnlyList<CompensationRequest>> GetDueForPayoutAsync(DateTime asOfUtc, CancellationToken ct = default);
 
+    /// <summary>
+    /// Requests left in <see cref="CompensationRequestStatus.Paying"/> — a payout that was claimed
+    /// but never confirmed <see cref="CompensationRequestStatus.Paid"/> because the job died mid-flight.
+    /// These need manual reconciliation against MT5 and are never auto-retried by the payout job.
+    /// </summary>
+    Task<IReadOnlyList<CompensationRequest>> GetInFlightPayoutsAsync(CancellationToken ct = default);
+
     /// <summary>Requests awaiting admin action (Submitted or UnderReview) — the admin's review queue.</summary>
     Task<IReadOnlyList<CompensationRequest>> GetReviewQueueAsync(CancellationToken ct = default);
 

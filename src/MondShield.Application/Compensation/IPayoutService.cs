@@ -1,3 +1,5 @@
+using MondShield.Application.Common.Models;
+
 namespace MondShield.Application.Compensation;
 
 /// <summary>
@@ -11,4 +13,16 @@ public interface IPayoutService
 {
     /// <summary>Processes every Approved request due for payout as of now. Returns how many were paid.</summary>
     Task<int> ProcessDuePayoutsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Reconcile a request stuck in <c>Paying</c> whose MT5 credit the admin has VERIFIED landed:
+    /// completes the payout (ledger, down-transition, cap, Paid) without re-crediting MT5.
+    /// </summary>
+    Task<Result> ConfirmStuckPayoutAsync(Guid requestId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reconcile a request stuck in <c>Paying</c> whose MT5 credit the admin has VERIFIED did NOT land:
+    /// reverts it to <c>Approved</c> so the next payout run credits it cleanly.
+    /// </summary>
+    Task<Result> ResetStuckPayoutAsync(Guid requestId, CancellationToken ct = default);
 }

@@ -54,6 +54,19 @@ public sealed class AdminCompensationController : ControllerBase
         return Ok(requests.Select(CompensationRequestResponse.From));
     }
 
+    /// <summary>
+    /// Requests stuck in Paying — claimed by a payout run that then died before confirming Paid.
+    /// The credit may or may not have reached MT5; each needs manual reconciliation via the two
+    /// reconcile actions below.
+    /// </summary>
+    [HttpGet("queue/in-flight")]
+    [ProducesResponseType(typeof(IEnumerable<CompensationRequestResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IEnumerable<CompensationRequestResponse>>> InFlight(CancellationToken ct)
+    {
+        var requests = await _compensationRepository.GetInFlightPayoutsAsync(ct);
+        return Ok(requests.Select(CompensationRequestResponse.From));
+    }
+
     /// <summary>Every person's lifetime compensation total against the $5,000 cap — cap monitoring.</summary>
     [HttpGet("cap-trackers")]
     [ProducesResponseType(typeof(IEnumerable<CapTrackerResponse>), StatusCodes.Status200OK)]
@@ -90,6 +103,34 @@ public sealed class AdminCompensationController : ControllerBase
     public async Task<IActionResult> Reject(Guid requestId, [FromBody] ReviewDecisionRequest request, CancellationToken ct)
     {
         var result = await _compensation.RejectAsync(requestId, request.ReviewerNote, ct);
+        return result.Succeeded ? NoContent() : BadRequest(new ErrorResponse(result.Errors));
+    }
+
+    /// <summary>
+    /// Reconcile a stuck Paying request AFTER verifying in MT5 that its DEAL_BALANCE credit landed
+    /// (match the deal comment against this request Id): completes the payout — ledger, down-transition,
+    /// cap, Paid — without re-crediting MT5.
+    /// </summary>
+    [HttpPost("{requestId:guid}/reconcile/confirm-paid")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ConfirmStuckPayout(Guid requestId, CancellationToken ct)
+    {
+        var result = await _payout.ConfirmStuckPayoutAsync(requestId, ct);
+        return result.Succeeded ? NoContent() : BadRequest(new ErrorResponse(result.Errors));
+    }
+
+    /// <summary>
+    /// Reconcile a stuck Paying request AFTER verifying in MT5 that its credit did NOT land: reverts it
+    /// to Approved so the next payout run credits it cleanly. Never call this without checking MT5 —
+    /// resetting a request whose credit actually landed causes a double payment.
+    /// </summary>
+    [HttpPost("{requestId:guid}/reconcile/reset-approved")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetStuckPayout(Guid requestId, CancellationToken ct)
+    {
+        var result = await _payout.ResetStuckPayoutAsync(requestId, ct);
         return result.Succeeded ? NoContent() : BadRequest(new ErrorResponse(result.Errors));
     }
 

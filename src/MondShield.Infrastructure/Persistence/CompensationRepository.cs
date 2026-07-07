@@ -31,6 +31,13 @@ public sealed class CompensationRepository : ICompensationRepository
             .Where(r => r.Status == CompensationRequestStatus.Approved && r.ScheduledPayoutDateUtc <= asOfUtc)
             .ToListAsync(ct);
 
+    // Tracked (not AsNoTracking): the payout job surfaces these for reconciliation and may
+    // resolve them, so change tracking must stay on.
+    public async Task<IReadOnlyList<CompensationRequest>> GetInFlightPayoutsAsync(CancellationToken ct = default) =>
+        await _db.CompensationRequests
+            .Where(r => r.Status == CompensationRequestStatus.Paying)
+            .ToListAsync(ct);
+
     // Read-only listings — AsNoTracking, unlike the command-flow reads above.
     public async Task<IReadOnlyList<CompensationRequest>> GetReviewQueueAsync(CancellationToken ct = default) =>
         await _db.CompensationRequests.AsNoTracking()

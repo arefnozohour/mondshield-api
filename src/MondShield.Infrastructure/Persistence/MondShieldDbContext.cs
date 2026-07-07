@@ -131,6 +131,16 @@ public class MondShieldDbContext : DbContext
             b.Property(e => e.Bucket).HasConversion<string>().HasMaxLength(16).IsRequired();
             b.Property(e => e.Reason).HasConversion<string>().HasMaxLength(16).IsRequired();
             b.Property(e => e.Amount).HasPrecision(18, 2);
+
+            // DB-level backstop against a double compensation credit: at most one Compensation
+            // ledger line per source request. The payout claim/confirm flow already prevents this
+            // in code; this filtered unique index makes it impossible even if that logic is bypassed
+            // or a reconciliation is mis-run. Filtered to Compensation ONLY — a profit withdrawal
+            // legitimately writes several ledger lines sharing one RelatedRequestId, so this must
+            // not constrain other reasons.
+            b.HasIndex(e => e.RelatedRequestId)
+                .IsUnique()
+                .HasFilter("reason = 'Compensation'");
         });
     }
 
