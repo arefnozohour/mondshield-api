@@ -37,6 +37,8 @@ public static class DependencyInjection
         AddMt5Client(services, configuration);
         AddScheduler(services, configuration);
 
+        services.AddScoped<IMt5AccountInfoService, Mt5AccountInfoService>();
+
         services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
         services.AddScoped<IIdentityService, IdentityService>();
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();

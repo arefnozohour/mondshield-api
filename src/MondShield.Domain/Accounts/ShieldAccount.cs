@@ -27,14 +27,39 @@ public class ShieldAccount
     /// <summary>MT5 login created via the Manager API. Null until provisioned.</summary>
     public long? Mt5Login { get; set; }
 
+    /// <summary>
+    /// The MT5 main (trader) password from provisioning. Retained so the trader can retrieve the
+    /// credentials they need to log into the MT5 terminal (they never chose the password; our
+    /// system generated it). Null until provisioned.
+    /// </summary>
+    public string? Mt5MainPassword { get; set; }
+
+    /// <summary>The MT5 investor (read-only) password from provisioning. Null until provisioned.</summary>
+    public string? Mt5InvestorPassword { get; set; }
+
     /// <summary>When the admin confirmed the $2,000 activation deposit. Null until then.</summary>
     public DateTime? ActivatedAtUtc { get; set; }
 
     /// <summary>
     /// The account's first trade. Anchors the 30-day level-up window — coverage is active from
-    /// this moment, with no separate waiting period.
+    /// this moment, with no separate waiting period. Set by MT5 reconciliation when the first
+    /// real trade is observed.
     /// </summary>
     public DateTime? FirstTradeAtUtc { get; set; }
+
+    /// <summary>
+    /// Watermark for incremental MT5 trade-history reconciliation: the exclusive upper bound of
+    /// the last synced window. The next sync reads trades closed after this instant, so realized
+    /// profit and commission are each counted exactly once. Null until the first reconciliation.
+    /// </summary>
+    public DateTime? LastTradeSyncAtUtc { get; set; }
+
+    /// <summary>
+    /// The MT5 account balance read at the last reconciliation. Compared against the local ledger
+    /// total to surface drift (e.g. capital-eroding losses this model leaves to the compensation
+    /// flow). Null until the first reconciliation.
+    /// </summary>
+    public decimal? LastMt5Balance { get; set; }
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 

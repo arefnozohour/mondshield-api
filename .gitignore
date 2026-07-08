@@ -45,3 +45,6 @@ secrets.json
 ## OS
 Thumbs.db
 .DS_Store
+# env files (can opt-in for committing if needed)
+.env*
+graphify-out/*

@@ -58,6 +58,19 @@ public sealed record BalanceComposition(
         return this with { Profit = Profit + amount };
     }
 
+    /// <summary>
+    /// Applies a period's net realized trading result to the profit bucket. Unlike
+    /// <see cref="AddProfit"/> the delta may be NEGATIVE (a losing period), but the bucket is
+    /// floored at zero: losses first erode previously accrued profit and then stop. Any loss
+    /// beyond accrued profit is capital impairment, which this model does NOT push into the
+    /// insured-capital bucket — that is what the compensation flow is for, and the exact
+    /// definition of "trading loss" is an open question with the broker. The residual shows up
+    /// as drift between our ledger total and the MT5 balance, which reconciliation surfaces.
+    /// </summary>
+    /// <returns>The new composition after clamping the profit bucket at zero.</returns>
+    public BalanceComposition ApplyRealizedProfit(decimal grossProfitDelta) =>
+        this with { Profit = Math.Max(0m, Profit + grossProfitDelta) };
+
     /// <summary>Records commission paid by the trader (excluded from coverage/share math).</summary>
     public BalanceComposition AddCommission(decimal amount)
     {

@@ -1,0 +1,79 @@
+# MondShield BACKEND stack — Postgres + API (single Linux server, Stub MT5 mode).
+# Self-contained: the DB and the API run together here. The frontend is a separate compose
+# (mondshield-web/docker-compose.yml).
+#
+#   cp .env.example .env      # fill it in
+#   docker compose up -d --build
+#
+# Values come from the .env file next to this compose.
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    # Published on a non-default host port (POSTGRES_PORT, default 54329) → container's 5432.
+    # The API doesn't use this — it reaches Postgres on the `backend` network at host `postgres`.
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Development enables the app's auto schema-create (no migrations yet) + admin/user seeding,
+      # and skips HTTPS redirect so plain HTTP works behind your reverse proxy / direct port.
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY}
+      # The browser origin allowed to call the API (your frontend's public URL).
+      Cors__AllowedOrigins__0: "http://${SERVER_HOST}:${WEB_PORT}"
+      # MT5 from .env — keep MT5_MODE=Stub on Linux (native DLLs are Windows-only); the rest is
+      # only used when Mode=Live on a Windows host. All env-driven so nothing MT5 is baked in.
+      Mt5__Mode: ${MT5_MODE:-Stub}
+      Mt5__Server: ${MT5_SERVER:-}
+      Mt5__ManagerLogin: ${MT5_MANAGER_LOGIN:-0}
+      Mt5__ManagerPassword: ${MT5_MANAGER_PASSWORD:-}
+      Mt5__DefaultGroup: ${MT5_DEFAULT_GROUP:-demo\\mondshield}
+      Mt5__DefaultLeverage: ${MT5_DEFAULT_LEVERAGE:-100}
+      Database__RecreateOnStartup: "false"
+      Seed__Admin__Email: ${SEED_ADMIN_EMAIL}
+      Seed__Admin__Password: ${SEED_ADMIN_PASSWORD}
+      # Trader test users — blank EMAIL/PASSWORD to skip seeding them. These override the
+      # Seed:Users baked in appsettings.json, so the deployment controls exactly who is seeded.
+      Seed__Users__0__Email: ${SEED_USER1_EMAIL:-}
+      Seed__Users__0__Password: ${SEED_USER1_PASSWORD:-}
+      Seed__Users__0__FullName: ${SEED_USER1_NAME:-}
+      Seed__Users__1__Email: ${SEED_USER2_EMAIL:-}
+      Seed__Users__1__Password: ${SEED_USER2_PASSWORD:-}
+      Seed__Users__1__FullName: ${SEED_USER2_NAME:-}
+    networks:
+      - backend
+    ports:
+      - "${API_PORT}:8080"
+
+# The bridge that lets the API reach Postgres by service name (`postgres`). Compose would create
+# a default network anyway; this just makes it explicit.
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  pgdata:

@@ -54,7 +54,20 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
             var mainPassword = GeneratePassword();
             var investorPassword = GeneratePassword();
 
-            Check(manager.UserAdd(user, mainPassword, investorPassword), "UserAdd");
+            var addRes = manager.UserAdd(user, mainPassword, investorPassword);
+            if (addRes != MTRetCode.MT_RET_OK)
+            {
+                // MT_RET_ERR_PARAMS on UserAdd almost always means one of the values on the user
+                // object was rejected by the server — most commonly the target group doesn't exist,
+                // or the leverage/name/email/password isn't allowed by it. Log the server's actual
+                // group list so the correct DefaultGroup name is visible immediately.
+                LogAvailableGroups(manager);
+                throw new InvalidOperationException(
+                    $"MT5 UserAdd failed: {addRes}. Check that group '{_settings.DefaultGroup}' exists on the " +
+                    $"server (see the logged group list), that leverage {_settings.DefaultLeverage} is allowed by " +
+                    "that group, and that the name/email/password are valid.");
+            }
+
 
             var login = (long)user.Login();
             _logger.LogInformation("Provisioned MT5 account {Login} in group {Group}", login, _settings.DefaultGroup);
@@ -253,12 +266,66 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
     }
 
     /// <summary>
-    /// Generates a strong password that satisfies MT5's complexity rule (upper + lower + digit):
-    /// a random base64 core guarantees mixed case and digits are unlikely but not guaranteed, so
-    /// we prepend a fixed compliant prefix and append a digit.
+    /// Logs the list of groups the server actually exposes. Used as a diagnostic when
+    /// <c>UserAdd</c> fails with a params error, so the correct <c>Mt5:DefaultGroup</c> value is
+    /// visible without guessing. Best-effort: never throws — a failure here must not mask the
+    /// original provisioning error.
+    /// </summary>
+    private void LogAvailableGroups(CIMTManagerAPI manager)
+    {
+        try
+        {
+            var names = ReadGroupNames(manager);
+            _logger.LogInformation(
+                "MT5 server exposes {Count} group(s): {Groups}. Configured Mt5:DefaultGroup is '{DefaultGroup}'.",
+                names.Count, string.Join(", ", names), _settings.DefaultGroup);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to enumerate MT5 groups for diagnostics.");
+        }
+    }
+
+    /// <summary>Enumerates the group names the connected server exposes. Caller holds <c>_gate</c>.</summary>
+    private static IReadOnlyList<string> ReadGroupNames(CIMTManagerAPI manager)
+    {
+        var group = manager.GroupCreate()
+            ?? throw new InvalidOperationException("MT5 GroupCreate returned null.");
+
+        var total = manager.GroupTotal();
+        var names = new List<string>((int)total);
+        for (uint i = 0; i < total; i++)
+        {
+            if (manager.GroupNext(i, group) == MTRetCode.MT_RET_OK)
+            {
+                names.Add(group.Group());
+            }
+        }
+
+        return names;
+    }
+
+    public Task<IReadOnlyList<string>> ListGroupsAsync(CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var manager = EnsureConnected();
+            return Task.FromResult(ReadGroupNames(manager));
+        }
+    }
+
+    /// <summary>
+    /// Generates a strong password that satisfies MT5's password policy. Servers can require all
+    /// four character classes — uppercase, lowercase, digit, AND a special character — and a
+    /// base64 core (A–Z, a–z, 0–9 only, with +/= swapped out) guarantees none of them. A password
+    /// missing a required class is rejected by UserAdd with MT_RET_USR_INVALID_PASSWORD (or, on
+    /// looser servers, MT_RET_ERR_PARAMS). So we bookend the random core with a fixed compliant
+    /// prefix that covers every class: an uppercase letter, a lowercase letter, a digit, and a
+    /// special character.
     /// </summary>
     private static string GeneratePassword() =>
-        "A" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(9)).Replace("+", "x").Replace("/", "y").Replace("=", "z") + "9";
+        "Aa9!" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(9)).Replace("+", "x").Replace("/", "y").Replace("=", "z");
+
 
     public void Dispose()
     {

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MondShield.Api.Contracts;
 using MondShield.Application.Accounts;
+using MondShield.Application.Mt5;
 using MondShield.Application.Onboarding;
 using MondShield.Application.Onboarding.Dtos;
 using MondShield.Domain.Authorization;
@@ -23,15 +24,21 @@ public sealed class AdminAccountsController : ControllerBase
     private readonly IOnboardingService _onboarding;
     private readonly IShieldAccountRepository _accounts;
     private readonly IAccountActivityService _activity;
+    private readonly IMt5AccountInfoService _mt5Info;
+    private readonly IMt5ReconciliationService _reconciliation;
 
     public AdminAccountsController(
         IOnboardingService onboarding,
         IShieldAccountRepository accounts,
-        IAccountActivityService activity)
+        IAccountActivityService activity,
+        IMt5AccountInfoService mt5Info,
+        IMt5ReconciliationService reconciliation)
     {
         _onboarding = onboarding;
         _accounts = accounts;
         _activity = activity;
+        _mt5Info = mt5Info;
+        _reconciliation = reconciliation;
     }
 
     /// <summary>Look up any trader's account by id, with the owner's identity joined on.</summary>
@@ -42,6 +49,19 @@ public sealed class AdminAccountsController : ControllerBase
     {
         var joined = await _accounts.GetByIdWithUserAsync(accountId, ct);
         return joined is null ? NotFound() : Ok(AccountResponse.From(joined));
+    }
+
+    /// <summary>
+    /// A trader's provisioned MT5 credentials — login, server, and the generated main + investor
+    /// passwords. Sensitive; admin-only. Passwords are decrypted on demand for support/handoff.
+    /// </summary>
+    [HttpGet("{accountId:guid}/mt5")]
+    [ProducesResponseType(typeof(Mt5AccountInfoResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<Mt5AccountInfoResponse>> Mt5(Guid accountId, CancellationToken ct)
+    {
+        var info = await _mt5Info.GetForAccountAsync(accountId, ct);
+        return info is null ? NotFound() : Ok(Mt5AccountInfoResponse.From(info));
     }
 
     /// <summary>Any trader's unified activity feed (ledger + stage transitions), newest first.</summary>
@@ -67,6 +87,20 @@ public sealed class AdminAccountsController : ControllerBase
     {
         var accounts = await _accounts.GetOnboardingQueueWithUserAsync(ct);
         return Ok(accounts.Select(AccountResponse.From));
+    }
+
+    /// <summary>
+    /// Force an immediate MT5 reconciliation for one account: pull trade history since the last
+    /// sync, book realized profit + commission into the ledger, refresh the MT5 balance, and report
+    /// the drift. The same work the hourly job does, on demand.
+    /// </summary>
+    [HttpPost("{accountId:guid}/reconcile-mt5")]
+    [ProducesResponseType(typeof(Mt5ReconciliationResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<Mt5ReconciliationResult>> ReconcileMt5(Guid accountId, CancellationToken ct)
+    {
+        var result = await _reconciliation.ReconcileAccountAsync(accountId, ct);
+        return result.Succeeded ? Ok(result.Value) : BadRequest(new ErrorResponse(result.Errors));
     }
 
     /// <summary>Approve KYC: PendingKyc → KycApproved.</summary>

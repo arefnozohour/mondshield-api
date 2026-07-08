@@ -4,6 +4,7 @@ using Microsoft.OpenApi.Models;
 using MondShield.Application;
 using MondShield.Application.Common.Interfaces;
 using MondShield.Application.Compensation;
+using MondShield.Application.Mt5;
 using MondShield.Api.Security;
 using MondShield.Domain.Compensation;
 using MondShield.Infrastructure;
@@ -84,6 +85,14 @@ RecurringJob.AddOrUpdate<IPayoutService>(
     "compensation-payout",
     job => job.ProcessDuePayoutsAsync(CancellationToken.None),
     Cron.Monthly(PayoutSchedule.PayoutDayOfMonth, 0, 0));
+
+// Pulls each active account's realized trading profit and commission from MT5 into the local
+// ledger, sets FirstTradeAtUtc, and reconciles the MT5 balance. Hourly is a gentle default for the
+// (single-locked, low-volume) Manager API; admins can also trigger a per-account sync on demand.
+RecurringJob.AddOrUpdate<IMt5ReconciliationService>(
+    "mt5-reconciliation",
+    job => job.ReconcileAllActiveAsync(CancellationToken.None),
+    Cron.Hourly());
 
 // Skipped in Development: the frontend calls http://localhost:5259 directly (see
 // mondshield-web/.env.local), and if the API happens to be running under a profile with an

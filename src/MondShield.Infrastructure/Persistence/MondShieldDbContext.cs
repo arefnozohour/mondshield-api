@@ -68,6 +68,13 @@ public class MondShieldDbContext : DbContext
             b.Property(a => a.Mt5Login).HasColumnName("mt5_login");
             b.HasIndex(a => a.Mt5Login);
 
+            // Explicit column names: the snake_case convention squashes "Mt5" (it would emit
+            // mt5mainpassword / last_mt5balance), the same reason Mt5Login is named by hand above.
+            b.Property(a => a.Mt5MainPassword).HasColumnName("mt5_main_password").HasMaxLength(128);
+            b.Property(a => a.Mt5InvestorPassword).HasColumnName("mt5_investor_password").HasMaxLength(128);
+
+            b.Property(a => a.LastMt5Balance).HasColumnName("last_mt5_balance").HasPrecision(18, 2);
+
             b.Property(a => a.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
             b.Property(a => a.CurrentStage).HasConversion<string>().HasMaxLength(16);
 

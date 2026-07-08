@@ -33,6 +33,50 @@ public sealed class OnboardingService : IOnboardingService
         return Result<Guid>.Success(account.Id);
     }
 
+    public async Task<Result<RegisteredTraderResult>> RegisterTraderAsync(
+        Guid userId, string fullName, string email, CancellationToken ct = default)
+    {
+        var existing = await _accounts.GetByUserIdAsync(userId, ct);
+        if (existing is not null)
+        {
+            return Result<RegisteredTraderResult>.Failure("An account already exists for this user.");
+        }
+
+        // 1) Provision the MT5 account up front — the trader gets a live login at sign-up rather
+        //    than waiting on the admin's KYC → provision → activate steps.
+        var creation = await _mt5.CreateAccountAsync(new Mt5AccountCreationRequest(fullName, email), ct);
+
+        // 2) Create the ShieldAccount already activated at Stage 1 with the standard $2,000 of
+        //    insured capital, so the trader lands with a $2,000 balance.
+        var deposit = MoneyConstants.ActivationDepositAmount;
+        var account = new ShieldAccount
+        {
+            UserId = userId,
+            Mt5Login = creation.Login,
+            Mt5MainPassword = creation.MainPassword,
+            Mt5InvestorPassword = creation.InvestorPassword,
+            Composition = new BalanceComposition(0m, 0m, 0m, 0m).AddInsuredCapital(deposit),
+            CurrentStage = StageLevel.Stage1,
+            Status = AccountStatus.Active,
+            ActivatedAtUtc = DateTime.UtcNow,
+        };
+
+        await _accounts.AddAsync(account, ct);
+        await _accounts.AddLedgerEntryAsync(new LedgerEntry
+        {
+            AccountId = account.Id,
+            Bucket = BalanceBucket.InsuredCapital,
+            Reason = LedgerEntryReason.Deposit,
+            Amount = deposit,
+            Note = "Stage 1 activation deposit",
+        }, ct);
+
+        await _accounts.SaveChangesAsync(ct);
+
+        return Result<RegisteredTraderResult>.Success(new RegisteredTraderResult(
+            account.Id, creation.Login, creation.MainPassword, creation.InvestorPassword, deposit));
+    }
+
     public async Task<Result> ApproveKycAsync(Guid accountId, CancellationToken ct = default)
     {
         var account = await _accounts.GetByIdAsync(accountId, ct);
@@ -68,6 +112,8 @@ public sealed class OnboardingService : IOnboardingService
         var creation = await _mt5.CreateAccountAsync(new Mt5AccountCreationRequest(fullName, email), ct);
 
         account.Mt5Login = creation.Login;
+        account.Mt5MainPassword = creation.MainPassword;
+        account.Mt5InvestorPassword = creation.InvestorPassword;
         account.Status = AccountStatus.Provisioned;
         await _accounts.SaveChangesAsync(ct);
 

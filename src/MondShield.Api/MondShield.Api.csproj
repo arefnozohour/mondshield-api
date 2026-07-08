@@ -2,10 +2,17 @@
 
   <PropertyGroup>
     <UserSecretsId>e5d161c2-635b-4d28-bec0-4759ff1b0b1d</UserSecretsId>
-    <!-- The MT5 native manager DLLs are x64-only, so the host process must run as x64. -->
+  </PropertyGroup>
+
+  <!--
+    Windows build (default): live MT5 needs the x64 native manager DLLs, so pin the process to
+    x64 / win-x64 and copy the natives next to the exe. Pass -p:TargetLinux=true (the Docker
+    build does) to skip all of that and produce a portable Linux build — valid because the Linux
+    deployment runs Stub mode and never loads the MT5 DLLs.
+  -->
+  <PropertyGroup Condition="'$(TargetLinux)' != 'true'">
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <!-- We ship a framework-dependent app; don't self-contain just because an RID is set. -->
     <SelfContained>false</SelfContained>
   </PropertyGroup>
 
@@ -32,7 +39,7 @@
     the managed wrapper via SMTManagerAPIFactory.Initialize(<app dir>). Just copy them next to
     the exe (the CPU-appropriate variant — base / avx / avx2 / arm — is auto-selected at runtime).
   -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetLinux)' != 'true'">
     <None Include="..\..\libs\mt5\MT5APIManager64*.dll">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -14,6 +14,10 @@ public sealed record AccountResponse(
     DateTime? FirstTradeAtUtc,
     DateTime CreatedAtUtc,
     BalanceCompositionResponse Composition,
+    // MT5 reconciliation snapshot: the balance read from MT5 at the last sync and when that was.
+    // Null until the first reconciliation runs. Compare against Composition.Total to see drift.
+    decimal? LastMt5Balance,
+    DateTime? LastTradeSyncAtUtc,
     // Populated on admin views (joined from the user record); null on the trader's own /me view,
     // where the client already knows its own identity from /auth/me.
     string? Email = null,
@@ -33,7 +37,9 @@ public sealed record AccountResponse(
             account.Composition.Compensation,
             account.Composition.Profit,
             account.Composition.Commission,
-            account.Composition.Total));
+            account.Composition.Total),
+        account.LastMt5Balance,
+        account.LastTradeSyncAtUtc);
 
     /// <summary>Admin variant carrying the joined trader identity.</summary>
     public static AccountResponse From(AccountWithUser joined) =>

@@ -9,8 +9,18 @@ namespace MondShield.Application.Onboarding;
 /// </summary>
 public interface IOnboardingService
 {
-    /// <summary>Creates the trader's ShieldAccount at <c>PendingKyc</c>. Called right after registration.</summary>
+    /// <summary>Creates the trader's ShieldAccount at <c>PendingKyc</c>. Used by startup seeding.</summary>
     Task<Result<Guid>> CreateAccountForNewUserAsync(Guid userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Full self-service onboarding done at registration time: creates the trader's ShieldAccount,
+    /// provisions their MT5 account via the Manager API, and immediately activates it at Stage 1
+    /// with the standard $2,000 insured capital — so a freshly registered trader lands live with a
+    /// $2,000 balance instead of waiting on the admin's KYC/provision/activate steps. Returns the
+    /// new account id (and the one-time MT5 credentials).
+    /// </summary>
+    Task<Result<RegisteredTraderResult>> RegisterTraderAsync(Guid userId, string fullName, string email, CancellationToken ct = default);
+
 
     /// <summary>Admin approves KYC: <c>PendingKyc</c> → <c>KycApproved</c>.</summary>
     Task<Result> ApproveKycAsync(Guid accountId, CancellationToken ct = default);
@@ -40,3 +50,15 @@ public interface IOnboardingService
 
 /// <summary>The MT5 login and one-time credentials from provisioning, shown to the admin once.</summary>
 public sealed record Mt5ProvisioningResult(long Mt5Login, string MainPassword, string InvestorPassword);
+
+/// <summary>
+/// Result of self-service registration onboarding: the new account id, its freshly provisioned
+/// MT5 login and one-time credentials, and the insured capital it was activated with.
+/// </summary>
+public sealed record RegisteredTraderResult(
+    Guid AccountId,
+    long Mt5Login,
+    string MainPassword,
+    string InvestorPassword,
+    decimal InsuredCapital);
+

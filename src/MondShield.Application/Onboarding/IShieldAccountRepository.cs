@@ -19,6 +19,12 @@ public interface IShieldAccountRepository
     /// <summary>Null if this user has not been onboarded yet.</summary>
     Task<ShieldAccount?> GetByUserIdAsync(Guid userId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Active accounts that have a provisioned MT5 login — the set the reconciliation job walks to
+    /// pull trade history and balances. Tracked (the caller mutates composition/watermark and saves).
+    /// </summary>
+    Task<IReadOnlyList<ShieldAccount>> GetActiveWithMt5LoginAsync(CancellationToken ct = default);
+
     /// <summary>An account joined to its owner's identity (email + full name). Null if not found.</summary>
     Task<AccountWithUser?> GetByIdWithUserAsync(Guid accountId, CancellationToken ct = default);
 

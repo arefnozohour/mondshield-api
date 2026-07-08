@@ -25,8 +25,9 @@ public sealed class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Register a new trader account (assigned the User role), create their MondShield
-    /// account (starting at PendingKyc), and return a token pair.
+    /// Register a new trader account (assigned the User role), create and provision their
+    /// MondShield + MT5 account, activate it at Stage 1 with the standard $2,000 insured capital,
+    /// and return a token pair.
     /// </summary>
     [HttpPost("register")]
     [AllowAnonymous]
@@ -40,7 +41,13 @@ public sealed class AuthController : ControllerBase
             return BadRequest(new ErrorResponse(result.Errors));
         }
 
-        await _onboardingService.CreateAccountForNewUserAsync(result.Value!.UserId, ct);
+        // Provision the MT5 account and activate at Stage 1 with $2,000 right at sign-up.
+        var onboarding = await _onboardingService.RegisterTraderAsync(
+            result.Value!.UserId, request.FullName, request.Email, ct);
+        if (!onboarding.Succeeded)
+        {
+            return BadRequest(new ErrorResponse(onboarding.Errors));
+        }
 
         return Ok(result.Value);
     }

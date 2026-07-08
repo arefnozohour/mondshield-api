@@ -1,0 +1,17 @@
+# Build artifacts — always rebuilt in the image
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+
+# Local secrets / config that must NOT go into the image (config comes from compose env)
+**/appsettings.Local.json
+**/appsettings.*.local.json
+**/secrets.json
+**/*.env
+
+# Repo noise
+.git/
+.gitignore
+*.md
+docs/

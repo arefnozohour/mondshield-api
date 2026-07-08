@@ -25,6 +25,13 @@ public sealed class ShieldAccountRepository : IShieldAccountRepository
     public Task<ShieldAccount?> GetByUserIdAsync(Guid userId, CancellationToken ct = default) =>
         _db.ShieldAccounts.FirstOrDefaultAsync(a => a.UserId == userId, ct);
 
+    // Tracked — the reconciliation job mutates composition/watermark on the returned entities.
+    public async Task<IReadOnlyList<ShieldAccount>> GetActiveWithMt5LoginAsync(CancellationToken ct = default) =>
+        await _db.ShieldAccounts
+            .Where(a => a.Status == AccountStatus.Active && a.Mt5Login != null)
+            .OrderBy(a => a.CreatedAtUtc)
+            .ToListAsync(ct);
+
     // Read-only listing — AsNoTracking, unlike the command-flow reads above.
     public async Task<IReadOnlyList<ShieldAccount>> GetOnboardingQueueAsync(CancellationToken ct = default) =>
         await _db.ShieldAccounts.AsNoTracking()
