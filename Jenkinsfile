@@ -68,7 +68,22 @@ pipeline {
 
     stage('Build & deploy') {
       steps {
-        sh 'docker compose up -d --build --remove-orphans'
+        // Bring Postgres up only if its container isn't already running — an existing DB is left
+        // untouched (no recreate, no restart, no risk to data). Then always rebuild & update just
+        // the API (`--no-deps` so it doesn't drag Postgres into a recreate).
+        sh '''
+          PG_ID="$(docker compose ps -q postgres 2>/dev/null || true)"
+          if [ -n "$PG_ID" ] && [ "$(docker inspect -f '{{.State.Running}}' "$PG_ID" 2>/dev/null)" = "true" ]; then
+            echo "Postgres container already running ($PG_ID) — skipping DB startup."
+          else
+            echo "Postgres not running — starting it and waiting for health."
+            # --wait blocks until the healthcheck passes, so the API (started with --no-deps below,
+            # which skips the depends_on health gate) never comes up against a not-ready DB.
+            docker compose up -d --wait postgres
+          fi
+
+          docker compose up -d --build --no-deps --remove-orphans api
+        '''
       }
     }
   }

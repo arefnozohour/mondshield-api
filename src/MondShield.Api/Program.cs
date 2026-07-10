@@ -27,16 +27,50 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 // mondshield-web (Next.js) runs on a separate origin in dev. Configurable via
 // Cors:AllowedOrigins so a deployed frontend origin can be added later without a code change.
+// Cors:AllowAnyOrigin=true opens the API to ANY origin (safe here only because auth is a JWT
+// Bearer token in the Authorization header, not cookies — AllowAnyOrigin can't be combined with
+// credentials). Otherwise, Cors:AllowNgrok additionally permits any *.ngrok-free.app /
+// *.ngrok.app / *.ngrok.io origin, so a machine exposed through an ngrok tunnel works without
+// hardcoding the rotating free-tier URL (which changes on every ngrok restart).
 builder.Services.AddCors(options =>
 {
+    var allowAnyOrigin = builder.Configuration.GetValue<bool>("Cors:AllowAnyOrigin");
     var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
         ?? ["http://localhost:3000"];
+    var allowNgrok = builder.Configuration.GetValue<bool>("Cors:AllowNgrok");
 
     options.AddPolicy(WebDevCorsPolicy, policy =>
-        policy.WithOrigins(allowedOrigins)
+    {
+        if (allowAnyOrigin)
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+            return;
+        }
+
+        policy.SetIsOriginAllowed(origin =>
+              {
+                  if (allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+                  {
+                      return true;
+                  }
+
+                  if (!allowNgrok || !Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                  {
+                      return false;
+                  }
+
+                  return uri.Host.EndsWith(".ngrok-free.app", StringComparison.OrdinalIgnoreCase)
+                      || uri.Host.EndsWith(".ngrok.app", StringComparison.OrdinalIgnoreCase)
+                      || uri.Host.EndsWith(".ngrok.io", StringComparison.OrdinalIgnoreCase);
+              })
               .AllowAnyHeader()
-              .AllowAnyMethod());
+              .AllowAnyMethod();
+    });
 });
+
+
 
 var app = builder.Build();
 

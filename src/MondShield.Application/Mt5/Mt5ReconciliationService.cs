@@ -156,6 +156,13 @@ public sealed class Mt5ReconciliationService : IMt5ReconciliationService
             }, ct);
         }
 
+        // Capture balance operations (deposits/withdrawals) in the same window. These are how money
+        // moves in/out outside trading — a trader top-up or a manual dealer op — which the balance
+        // number alone hides. Each is recorded once, keyed by its MT5 deal ticket; a system-originated
+        // credit (comment carries the MondShield marker) is already booked by its originating flow and
+        // recorded for audit only, while an external one is queued for admin classification.
+        var (balanceOpsObserved, pendingReview) = await CaptureBalanceOperationsAsync(account, login, from, syncUpTo, ct);
+
         account.LastTradeSyncAtUtc = syncUpTo;
         account.LastMt5Balance = snapshot.Balance;
 
@@ -164,14 +171,71 @@ public sealed class Mt5ReconciliationService : IMt5ReconciliationService
 
         if (Math.Abs(drift) > DriftWarnThreshold)
         {
-            // Expected causes: capital-eroding losses this model leaves to the compensation flow,
-            // or a balance change made directly in MT5 (manual dealer op) that never went through us.
+            // Expected causes: capital-eroding losses this model leaves to the compensation flow, or an
+            // external balance change now captured above as a PendingReview op — classifying it (into
+            // the correct bucket) is what closes this drift.
             _logger.LogWarning(
-                "MT5 reconciliation drift for account {AccountId} (login {Login}): MT5 balance {Balance} vs ledger total {Total} (drift {Drift}).",
-                account.Id, login, snapshot.Balance, ledgerTotal, drift);
+                "MT5 reconciliation drift for account {AccountId} (login {Login}): MT5 balance {Balance} vs ledger total {Total} " +
+                "(drift {Drift}); {Pending} balance op(s) pending review.",
+                account.Id, login, snapshot.Balance, ledgerTotal, drift, pendingReview);
         }
 
         return new Mt5ReconciliationResult(
-            newTrades.Count, profitDelta, commission, snapshot.Balance, ledgerTotal, drift, syncUpTo);
+            newTrades.Count, profitDelta, commission, snapshot.Balance, ledgerTotal, drift, balanceOpsObserved, pendingReview, syncUpTo);
+    }
+
+    /// <summary>
+    /// Records the balance operations in (from, syncUpTo] that we have not seen before (deduped by MT5
+    /// deal ticket). System-originated credits are recorded as already-booked; external ones are queued
+    /// for admin classification. Does not save — the caller owns the commit.
+    /// </summary>
+    /// <returns>(total ops recorded this run, of which pending review).</returns>
+    private async Task<(int Observed, int PendingReview)> CaptureBalanceOperationsAsync(
+        ShieldAccount account, long login, DateTime from, DateTime syncUpTo, CancellationToken ct)
+    {
+        var deals = await _mt5.GetBalanceOperationsAsync(login, from, syncUpTo, ct);
+        var newDeals = deals
+            .Where(d => d.TimeUtc > from && d.TimeUtc <= syncUpTo)
+            .ToList();
+
+        if (newDeals.Count == 0)
+        {
+            return (0, 0);
+        }
+
+        var known = await _accounts.GetKnownBalanceOpDealIdsAsync(
+            account.Id, newDeals.Select(d => d.DealId).ToList(), ct);
+
+        var observed = 0;
+        var pending = 0;
+        foreach (var deal in newDeals)
+        {
+            if (known.Contains(deal.DealId))
+            {
+                continue;
+            }
+
+            var isSystem = Mt5Comments.IsSystemOriginated(deal.Comment);
+            await _accounts.AddBalanceOperationAsync(new Mt5BalanceOperation
+            {
+                AccountId = account.Id,
+                Mt5Login = login,
+                DealId = deal.DealId,
+                Amount = deal.Amount,
+                Comment = deal.Comment,
+                OccurredAtUtc = deal.TimeUtc,
+                Status = isSystem
+                    ? Mt5BalanceOperationStatus.RecordedFromSystem
+                    : Mt5BalanceOperationStatus.PendingReview,
+            }, ct);
+
+            observed++;
+            if (!isSystem)
+            {
+                pending++;
+            }
+        }
+
+        return (observed, pending);
     }
 }

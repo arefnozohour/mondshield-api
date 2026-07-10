@@ -21,6 +21,7 @@ public static class DependencyInjection
         services.AddScoped<IProfitWithdrawalService, ProfitWithdrawalService>();
         services.AddScoped<IAccountActivityService, AccountActivityService>();
         services.AddScoped<IMt5ReconciliationService, Mt5ReconciliationService>();
+        services.AddScoped<IMt5BalanceOperationService, Mt5BalanceOperationService>();
         return services;
     }
 }

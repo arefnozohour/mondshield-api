@@ -40,6 +40,36 @@ public sealed class Mt5Settings
     /// <c>Live</c> = the real MetaQuotes Manager API against <see cref="Server"/>.
     /// </summary>
     public Mt5Mode Mode { get; set; } = Mt5Mode.Stub;
+
+    /// <summary>Real-time (pump/sink) tracking settings. Only takes effect in <see cref="Mt5Mode.Live"/>.</summary>
+    public Mt5RealtimeSettings Realtime { get; set; } = new();
+}
+
+/// <summary>
+/// Configures real-time tracking: instead of only the hourly reconciliation job, the Manager
+/// connection runs in pump mode and a deal sink fires the moment a trade closes or money moves,
+/// triggering an immediate reconciliation of the affected account. The hourly job stays on as a
+/// backstop, so this is purely a latency improvement.
+/// </summary>
+public sealed class Mt5RealtimeSettings
+{
+    /// <summary>
+    /// Turn real-time tracking on. When off, the connection stays in <c>PUMP_MODE_NONE</c> (fast,
+    /// request/response only — today's behaviour) and only the scheduled job reconciles.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// How long to coalesce a burst of deal events for the same account before reconciling, so one
+    /// position close that generates several deals triggers a single reconciliation.
+    /// </summary>
+    public int DebounceMs { get; set; } = 1_500;
+
+    /// <summary>
+    /// How often the listener forces the pumped connection to (re)establish, so a dropped connection
+    /// recovers without waiting for the next request/response call.
+    /// </summary>
+    public int HeartbeatSeconds { get; set; } = 30;
 }
 
 /// <summary>Selects the <c>IMt5Client</c> implementation at composition time.</summary>

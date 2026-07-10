@@ -20,6 +20,7 @@ public class MondShieldDbContext : DbContext
     public DbSet<CompensationRequest> CompensationRequests => Set<CompensationRequest>();
     public DbSet<CompensationCapTracker> CompensationCapTrackers => Set<CompensationCapTracker>();
     public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
+    public DbSet<Mt5BalanceOperation> Mt5BalanceOperations => Set<Mt5BalanceOperation>();
     public DbSet<ProfitWithdrawal> ProfitWithdrawals => Set<ProfitWithdrawal>();
     public DbSet<StageTransitionRecord> StageTransitions => Set<StageTransitionRecord>();
 
@@ -33,6 +34,7 @@ public class MondShieldDbContext : DbContext
         ConfigureCompensationRequests(builder);
         ConfigureCompensationCapTrackers(builder);
         ConfigureLedgerEntries(builder);
+        ConfigureMt5BalanceOperations(builder);
         ConfigureProfitWithdrawals(builder);
         ConfigureStageTransitions(builder);
     }
@@ -148,6 +150,32 @@ public class MondShieldDbContext : DbContext
             b.HasIndex(e => e.RelatedRequestId)
                 .IsUnique()
                 .HasFilter("reason = 'Compensation'");
+        });
+    }
+
+    private static void ConfigureMt5BalanceOperations(ModelBuilder builder)
+    {
+        builder.Entity<Mt5BalanceOperation>(b =>
+        {
+            b.ToTable("mt5_balance_operations");
+            b.HasKey(o => o.Id);
+
+            b.HasOne<ShieldAccount>().WithMany().HasForeignKey(o => o.AccountId).OnDelete(DeleteBehavior.Restrict);
+
+            b.Property(o => o.Mt5Login).HasColumnName("mt5_login");
+
+            // Idempotency backstop: at most one recorded op per (login, MT5 deal ticket). Reconciliation
+            // already dedupes in code; this makes a double-record impossible even under a concurrent run.
+            b.HasIndex(o => new { o.Mt5Login, o.DealId }).IsUnique();
+
+            // The admin worklist queries PendingReview ops; index the status it filters on.
+            b.HasIndex(o => o.Status);
+
+            b.Property(o => o.Amount).HasPrecision(18, 2);
+            b.Property(o => o.Comment).HasMaxLength(256);
+            b.Property(o => o.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
+            b.Property(o => o.ClassifiedBucket).HasConversion<string>().HasMaxLength(16);
+            b.Property(o => o.ResolutionNote).HasMaxLength(512);
         });
     }
 

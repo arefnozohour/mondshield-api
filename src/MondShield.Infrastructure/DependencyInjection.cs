@@ -114,10 +114,23 @@ public static class DependencyInjection
         // server needed. Set Mt5:Mode=Live (plus Mt5:Server / ManagerLogin / ManagerPassword via
         // user-secrets) to talk to the real MetaQuotes Manager API. Everything upstream depends
         // only on IMt5Client, so nothing else changes when you flip modes.
-        var mode = configuration.GetSection(Mt5Settings.SectionName).GetValue<Mt5Mode>("Mode");
+        var mt5Section = configuration.GetSection(Mt5Settings.SectionName);
+        var mode = mt5Section.GetValue<Mt5Mode>("Mode");
         if (mode == Mt5Mode.Live)
         {
-            services.AddSingleton<IMt5Client, Mt5ManagerClient>();
+            // One shared connection for both request/response and the real-time pump — many servers
+            // allow only one session per manager login, so the listener reuses this instance rather
+            // than opening a second connection. Register the concrete type once and alias IMt5Client
+            // to it so both resolve the same singleton.
+            services.AddSingleton<Mt5ManagerClient>();
+            services.AddSingleton<IMt5Client>(sp => sp.GetRequiredService<Mt5ManagerClient>());
+
+            // Real-time tracking: a hosted listener holds the pumped connection open and reconciles
+            // an account the moment a deal for it arrives. Opt-in via Mt5:Realtime:Enabled.
+            if (mt5Section.GetSection("Realtime").GetValue<bool>("Enabled"))
+            {
+                services.AddHostedService<Mt5RealtimeListener>();
+            }
         }
         else
         {

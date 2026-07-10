@@ -85,7 +85,7 @@ public sealed class PayoutService : IPayoutService
 
         // PHASE 2 — Credit MT5 (irreversible). The request Id is embedded in the comment so a stuck
         // Paying request can be reconciled to the exact DEAL_BALANCE deal on the MT5 side.
-        await _mt5.CreditBalanceAsync(mt5Login, request.CappedAmount, $"MondShield compensation {request.Id} - {request.StageAtRequest}", ct);
+        await _mt5.CreditBalanceAsync(mt5Login, request.CappedAmount, Mt5Comments.Compensation(request.Id, request.StageAtRequest), ct);
 
         // PHASE 3 — Confirm: record the ledger, apply the down-transition, bump the cap tracker, and
         // mark the request Paid, all committed atomically.

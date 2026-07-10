@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using MondShield.Application.Accounts;
+using MondShield.Application.Mt5;
 using MondShield.Application.Onboarding;
 using MondShield.Domain.Accounts;
 using MondShield.Domain.Ledger;
@@ -39,6 +40,12 @@ public sealed class ShieldAccountRepository : IShieldAccountRepository
             .OrderBy(a => a.CreatedAtUtc)
             .ToListAsync(ct);
 
+    public async Task<Guid?> GetActiveAccountIdByMt5LoginAsync(long mt5Login, CancellationToken ct = default) =>
+        await _db.ShieldAccounts.AsNoTracking()
+            .Where(a => a.Status == AccountStatus.Active && a.Mt5Login == mt5Login)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
+
     // Identity join: ShieldAccount ⋈ AppUser on UserId. AsNoTracking read-only projection.
     public async Task<AccountWithUser?> GetByIdWithUserAsync(Guid accountId, CancellationToken ct = default) =>
         await _db.ShieldAccounts.AsNoTracking()
@@ -65,6 +72,43 @@ public sealed class ShieldAccountRepository : IShieldAccountRepository
             .OrderByDescending(t => t.OccurredAtUtc)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlySet<long>> GetKnownBalanceOpDealIdsAsync(
+        Guid accountId, IReadOnlyCollection<long> dealIds, CancellationToken ct = default)
+    {
+        if (dealIds.Count == 0)
+        {
+            return new HashSet<long>();
+        }
+
+        var known = await _db.Mt5BalanceOperations.AsNoTracking()
+            .Where(o => o.AccountId == accountId && dealIds.Contains(o.DealId))
+            .Select(o => o.DealId)
+            .ToListAsync(ct);
+
+        return known.ToHashSet();
+    }
+
+    // Identity join so the admin worklist shows who the money moved for. AsNoTracking read-only.
+    public async Task<IReadOnlyList<Mt5BalanceOperationView>> GetPendingBalanceOperationsAsync(CancellationToken ct = default) =>
+        await _db.Mt5BalanceOperations.AsNoTracking()
+            .Where(o => o.Status == Mt5BalanceOperationStatus.PendingReview)
+            .OrderBy(o => o.OccurredAtUtc)
+            .Join(_db.ShieldAccounts, o => o.AccountId, a => a.Id, (o, a) => new { o, a.UserId })
+            .Join(_db.Users, x => x.UserId, u => u.Id, (x, u) => new Mt5BalanceOperationView(
+                x.o.Id, x.o.AccountId, x.o.Mt5Login, x.o.DealId, x.o.Amount, x.o.Comment,
+                x.o.OccurredAtUtc, x.o.ObservedAtUtc, x.o.Status.ToString(), u.Email, u.FullName))
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Mt5BalanceOperation>> GetBalanceOperationsForAccountAsync(Guid accountId, CancellationToken ct = default) =>
+        await _db.Mt5BalanceOperations.AsNoTracking()
+            .Where(o => o.AccountId == accountId)
+            .OrderByDescending(o => o.OccurredAtUtc)
+            .ToListAsync(ct);
+
+    // Tracked — the classification flow resolves the returned op and saves.
+    public Task<Mt5BalanceOperation?> GetBalanceOperationByIdAsync(Guid operationId, CancellationToken ct = default) =>
+        _db.Mt5BalanceOperations.FirstOrDefaultAsync(o => o.Id == operationId, ct);
+
     public Task AddAsync(ShieldAccount account, CancellationToken ct = default)
     {
         _db.ShieldAccounts.Add(account);
@@ -74,6 +118,12 @@ public sealed class ShieldAccountRepository : IShieldAccountRepository
     public Task AddLedgerEntryAsync(LedgerEntry entry, CancellationToken ct = default)
     {
         _db.LedgerEntries.Add(entry);
+        return Task.CompletedTask;
+    }
+
+    public Task AddBalanceOperationAsync(Mt5BalanceOperation operation, CancellationToken ct = default)
+    {
+        _db.Mt5BalanceOperations.Add(operation);
         return Task.CompletedTask;
     }
 

@@ -23,15 +23,33 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
     private readonly ILogger<Mt5ManagerClient> _logger;
     private readonly object _gate = new();
 
+    private readonly bool _realtimeEnabled;
+    private readonly DealEventSink _dealSink;
+    private readonly ConnectionSink _connSink;
+
     private CIMTManagerAPI? _manager;
     private bool _factoryInitialized;
     private bool _connected;
     private bool _disposed;
 
+    // Set by the connection sink (pump thread) when the server drops us, read under _gate by
+    // EnsureConnected to trigger a clean reconnect. Volatile: written without the gate.
+    private volatile bool _disconnected;
+
+    /// <summary>
+    /// Raised for every deal the server pushes in real time (trades and balance operations alike),
+    /// when real-time tracking is enabled. Fires on the native pump thread — handlers must be fast
+    /// and non-throwing (the listener just enqueues the login).
+    /// </summary>
+    public event EventHandler<Mt5RealtimeDealEvent>? DealReceived;
+
     public Mt5ManagerClient(IOptions<Mt5Settings> settings, ILogger<Mt5ManagerClient> logger)
     {
         _settings = settings.Value;
         _logger = logger;
+        _realtimeEnabled = _settings.Realtime.Enabled;
+        _dealSink = new DealEventSink(RaiseDeal);
+        _connSink = new ConnectionSink(this);
     }
 
     public Task<Mt5AccountCreationResult> CreateAccountAsync(Mt5AccountCreationRequest request, CancellationToken ct = default)
@@ -139,6 +157,51 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
         }
     }
 
+    public Task<IReadOnlyList<Mt5BalanceDeal>> GetBalanceOperationsAsync(long login, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var manager = EnsureConnected();
+
+            var deals = manager.DealCreateArray()
+                ?? throw new InvalidOperationException("MT5 DealCreateArray returned null.");
+
+            Check(
+                manager.DealRequest((ulong)login, SMTTime.FromDateTime(fromUtc), SMTTime.FromDateTime(toUtc), deals),
+                $"DealRequest({login})");
+
+            var ops = new List<Mt5BalanceDeal>();
+            var total = deals.Total();
+            for (uint i = 0; i < total; i++)
+            {
+                var deal = deals.Next(i);
+                if (deal is null)
+                {
+                    continue;
+                }
+
+                // The mirror of GetTradeHistoryAsync: keep ONLY balance operations (deposits /
+                // withdrawals / dealer credits), skipping the real trades handled there. For a
+                // DEAL_BALANCE deal the signed amount lives in Profit() (positive = deposit,
+                // negative = withdrawal). The deal ticket is the reconciliation idempotency key.
+                var action = (CIMTDeal.EnDealAction)deal.Action();
+                if (action != CIMTDeal.EnDealAction.DEAL_BALANCE)
+                {
+                    continue;
+                }
+
+                ops.Add(new Mt5BalanceDeal(
+                    login,
+                    (long)deal.Deal(),
+                    SMTTime.ToDateTime(deal.Time()),
+                    (decimal)deal.Profit(),
+                    deal.Comment() ?? string.Empty));
+            }
+
+            return Task.FromResult<IReadOnlyList<Mt5BalanceDeal>>(ops);
+        }
+    }
+
     public Task CreditBalanceAsync(long login, decimal amount, string comment, CancellationToken ct = default)
     {
         if (amount < 0m)
@@ -200,9 +263,20 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (_connected && _manager is not null)
+        if (_connected && _manager is not null && !_disconnected)
         {
             return _manager;
+        }
+
+        // A dropped pump connection (flagged by the connection sink) needs a clean reconnect: tear
+        // down the stale manager so the create/connect/subscribe below runs against a fresh one.
+        if (_disconnected && _manager is not null)
+        {
+            try { _manager.Disconnect(); } catch { /* already down */ }
+            _manager.Dispose();
+            _manager = null;
+            _connected = false;
+            _disconnected = false;
         }
 
         if (string.IsNullOrWhiteSpace(_settings.Server) || _settings.ManagerLogin == 0 || string.IsNullOrEmpty(_settings.ManagerPassword))
@@ -232,16 +306,23 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
             throw new InvalidOperationException($"MT5 CreateManager failed: {createRes}.");
         }
 
-        // PUMP_MODE_NONE: no real-time data streaming. All our operations (UserAdd,
-        // UserAccountRequest, DealRequest, DealerBalance) are request/response calls that don't
-        // need a pump. Any pump mode makes Connect download that data set up front — on a
-        // populated broker server that's slow enough to look like a hang — so we stream nothing.
+        // Pump mode. Default (real-time OFF): PUMP_MODE_NONE — no streaming; every operation
+        // (UserAdd, UserAccountRequest, DealRequest, DealerBalance) is a request/response call that
+        // needs no pump, and any pump makes Connect download that data set up front (slow on a
+        // populated server). Real-time ON: PUMP_MODE_USERS | PUMP_MODE_ACTIVITY streams user and
+        // trade activity so the deal sink fires on new deals — this is a background listener
+        // connection, so the heavier connect is acceptable.
+        var pumpMode = _realtimeEnabled
+            ? (CIMTManagerAPI.EnPumpModes)((uint)CIMTManagerAPI.EnPumpModes.PUMP_MODE_USERS
+                                          | (uint)CIMTManagerAPI.EnPumpModes.PUMP_MODE_ACTIVITY)
+            : CIMTManagerAPI.EnPumpModes.PUMP_MODE_NONE;
+
         var connect = manager.Connect(
             _settings.Server,
             (ulong)_settings.ManagerLogin,
             _settings.ManagerPassword,
             null,
-            CIMTManagerAPI.EnPumpModes.PUMP_MODE_NONE,
+            pumpMode,
             _settings.ConnectTimeoutMs);
 
         if (connect != MTRetCode.MT_RET_OK)
@@ -253,8 +334,38 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
 
         _manager = manager;
         _connected = true;
-        _logger.LogInformation("Connected to MT5 Manager API at {Server} as manager {Login}", _settings.Server, _settings.ManagerLogin);
+        _disconnected = false;
+        _logger.LogInformation("Connected to MT5 Manager API at {Server} as manager {Login} (pump {Pump})",
+            _settings.Server, _settings.ManagerLogin, pumpMode);
+
+        if (_realtimeEnabled)
+        {
+            // Subscribe the connection sink (disconnect detection) and the deal sink (real-time deal
+            // events) on this connection. Re-run on every (re)connect so a fresh manager is wired up.
+            var subConn = manager.Subscribe(_connSink);
+            var subDeal = manager.DealSubscribe(_dealSink);
+            _logger.LogInformation("MT5 real-time sinks subscribed (manager={ConnRes}, deal={DealRes}).", subConn, subDeal);
+        }
+
         return manager;
+    }
+
+    /// <summary>
+    /// Called on the native pump thread for each new deal. Copies out primitives (the native deal is
+    /// valid only for this call) and raises <see cref="DealReceived"/>. Never throws — a callback
+    /// exception must not cross back into native code.
+    /// </summary>
+    private void RaiseDeal(CIMTDeal deal)
+    {
+        try
+        {
+            var evt = new Mt5RealtimeDealEvent((long)deal.Login(), (long)deal.Deal(), deal.Action());
+            DealReceived?.Invoke(this, evt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MT5 real-time deal callback failed");
+        }
     }
 
     private static void Check(MTRetCode res, string operation)
@@ -326,6 +437,37 @@ public sealed class Mt5ManagerClient : IMt5Client, IDisposable
     private static string GeneratePassword() =>
         "Aa9!" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(9)).Replace("+", "x").Replace("/", "y").Replace("=", "z");
 
+
+    /// <summary>
+    /// Deal sink: the native pump calls <see cref="OnDealAdd"/> for every new deal (trade or balance
+    /// operation). Forwards to the owner, which raises the managed event. Kept trivial so nothing
+    /// heavy runs on the pump thread.
+    /// </summary>
+    private sealed class DealEventSink : CIMTDealSink
+    {
+        private readonly Action<CIMTDeal> _onAdd;
+        public DealEventSink(Action<CIMTDeal> onAdd) => _onAdd = onAdd;
+        public override void OnDealAdd(CIMTDeal deal) => _onAdd(deal);
+    }
+
+    /// <summary>
+    /// Connection sink: flags a dropped connection so the next <see cref="EnsureConnected"/> (driven
+    /// by the listener's heartbeat) reconnects cleanly instead of handing back a dead manager.
+    /// </summary>
+    private sealed class ConnectionSink : CIMTManagerSink
+    {
+        private readonly Mt5ManagerClient _owner;
+        public ConnectionSink(Mt5ManagerClient owner) => _owner = owner;
+
+        public override void OnDisconnect()
+        {
+            _owner._disconnected = true;
+            _owner._logger.LogWarning("MT5 Manager connection dropped (OnDisconnect); will reconnect on next heartbeat.");
+        }
+
+        public override void OnConnect() =>
+            _owner._logger.LogInformation("MT5 Manager connection (re)established (OnConnect).");
+    }
 
     public void Dispose()
     {

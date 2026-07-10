@@ -22,6 +22,15 @@ public interface IMt5Client
     /// <summary>Reads closed trades (profit and commission) for an MT5 login within a date range.</summary>
     Task<IReadOnlyList<Mt5Trade>> GetTradeHistoryAsync(long login, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
 
+    /// <summary>
+    /// Reads balance operations (deposits/withdrawals — MT5 <c>DEAL_BALANCE</c> deals) for an MT5
+    /// login within a date range. These are how money enters or leaves the account outside trading:
+    /// a trader top-up, a dealer credit, our own compensation payout, or a manual withdrawal. Kept
+    /// separate from <see cref="GetTradeHistoryAsync"/> because they carry no trading P&amp;L — they
+    /// move the balance directly — and the composition rules treat them differently.
+    /// </summary>
+    Task<IReadOnlyList<Mt5BalanceDeal>> GetBalanceOperationsAsync(long login, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
+
     /// <summary>Credits the MT5 balance directly — used to pay out an approved compensation request.</summary>
     Task CreditBalanceAsync(long login, decimal amount, string comment, CancellationToken ct = default);
 
@@ -56,3 +65,12 @@ public sealed record Mt5AccountSnapshot(long Login, decimal Balance, decimal Equ
 /// <param name="Profit">Net trade profit/loss (positive = profit, negative = loss), excluding commission and swap.</param>
 /// <param name="Commission">Commission charged on this trade — excluded from coverage by design.</param>
 public sealed record Mt5Trade(long Login, DateTime ClosedAtUtc, string Symbol, decimal Profit, decimal Commission, decimal Swap);
+
+/// <summary>
+/// One balance operation read from MT5 (a <c>DEAL_BALANCE</c> deal).
+/// </summary>
+/// <param name="DealId">The MT5 deal ticket — unique per login; used as the reconciliation idempotency key.</param>
+/// <param name="TimeUtc">When the balance change occurred.</param>
+/// <param name="Amount">Signed change: positive = deposit/credit, negative = withdrawal/debit.</param>
+/// <param name="Comment">The deal comment — how a system-originated credit is recognized (see <see cref="Mt5Comments"/>).</param>
+public sealed record Mt5BalanceDeal(long Login, long DealId, DateTime TimeUtc, decimal Amount, string Comment);

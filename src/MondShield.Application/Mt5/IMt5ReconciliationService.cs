@@ -21,10 +21,16 @@ public interface IMt5ReconciliationService
 
 /// <summary>
 /// Outcome of reconciling one account: how many new trades were applied, the net profit and
-/// commission booked this run, the freshly read MT5 balance, our ledger total, and the drift
-/// between them (MT5 balance − ledger total — non-zero drift flags losses the model leaves to the
-/// compensation flow, or an out-of-band balance change).
+/// commission booked this run, the freshly read MT5 balance, our ledger total, the drift between
+/// them (MT5 balance − ledger total), and the balance operations captured this run.
 /// </summary>
+/// <param name="Drift">
+/// MT5 balance − ledger total. Non-zero drift flags losses the model leaves to the compensation
+/// flow, or external balance operations now captured as <paramref name="BalanceOpsPendingReview"/>
+/// — classifying those closes the drift.
+/// </param>
+/// <param name="BalanceOpsObserved">Balance operations (deposits/withdrawals) newly recorded this run.</param>
+/// <param name="BalanceOpsPendingReview">Of those, how many are external and await admin classification.</param>
 public sealed record Mt5ReconciliationResult(
     int TradesApplied,
     decimal ProfitApplied,
@@ -32,4 +38,6 @@ public sealed record Mt5ReconciliationResult(
     decimal Mt5Balance,
     decimal LedgerTotal,
     decimal Drift,
+    int BalanceOpsObserved,
+    int BalanceOpsPendingReview,
     DateTime SyncedAtUtc);

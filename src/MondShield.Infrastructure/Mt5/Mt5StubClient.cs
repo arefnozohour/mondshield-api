@@ -11,7 +11,7 @@ namespace MondShield.Infrastructure.Mt5;
 /// <c>MetaQuotes.MT5ManagerAPI.dll</c> is wired in. State lives only for the process lifetime;
 /// registered as a singleton so it behaves like "one MT5 server" for the whole app.
 /// </summary>
-public sealed class Mt5StubClient : IMt5Client
+public sealed class Mt5StubClient : IMt5Client, IMt5TestHarness
 {
     private readonly ConcurrentDictionary<long, StubAccount> _accounts = new();
     private readonly string _defaultGroup;
@@ -27,7 +27,7 @@ public sealed class Mt5StubClient : IMt5Client
     {
         var login = Interlocked.Increment(ref _nextLogin);
 
-        _accounts[login] = new StubAccount(request.FullName, request.Email, _defaultGroup);
+        _accounts[login] = new StubAccount(request.FullName, request.Email, _defaultGroup) { Login = login };
 
         var mainPassword = GenerateStubPassword();
         var investorPassword = GenerateStubPassword();
@@ -54,6 +54,17 @@ public sealed class Mt5StubClient : IMt5Client
         return Task.FromResult(trades);
     }
 
+    public Task<IReadOnlyList<Mt5BalanceDeal>> GetBalanceOperationsAsync(long login, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+    {
+        var account = GetAccountOrThrow(login);
+
+        IReadOnlyList<Mt5BalanceDeal> ops = account.BalanceOps
+            .Where(o => o.TimeUtc >= fromUtc && o.TimeUtc <= toUtc)
+            .ToList();
+
+        return Task.FromResult(ops);
+    }
+
     public Task CreditBalanceAsync(long login, decimal amount, string comment, CancellationToken ct = default)
     {
         if (amount < 0m)
@@ -63,8 +74,22 @@ public sealed class Mt5StubClient : IMt5Client
 
         var account = GetAccountOrThrow(login);
         account.Balance += amount;
+        account.RecordBalanceOp(amount, comment);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Test/dev seam: simulate a balance change made directly on MT5, OUTSIDE our flows — a trader
+    /// top-up or a manual dealer op. Unlike <see cref="CreditBalanceAsync"/> this carries an
+    /// arbitrary (non-MondShield) comment, so reconciliation records it as a PendingReview external
+    /// operation. Lets the classification flow be exercised in Stub mode without a live server.
+    /// </summary>
+    public void SimulateExternalBalanceOperation(long login, decimal amount, string comment)
+    {
+        var account = GetAccountOrThrow(login);
+        account.Balance += amount;
+        account.RecordBalanceOp(amount, comment);
     }
 
     public Task<Mt5ConnectionStatus> CheckConnectionAsync(CancellationToken ct = default) =>
@@ -82,11 +107,19 @@ public sealed class Mt5StubClient : IMt5Client
 
     private sealed class StubAccount(string fullName, string email, string group)
     {
+        private long _nextDealId = 1;
+
         public string FullName { get; } = fullName;
         public string Email { get; } = email;
         public string Group { get; } = group;
         public decimal Balance { get; set; }
         public decimal Credit { get; set; }
         public List<Mt5Trade> Trades { get; } = [];
+        public List<Mt5BalanceDeal> BalanceOps { get; } = [];
+
+        public long Login { get; init; }
+
+        public void RecordBalanceOp(decimal amount, string comment) =>
+            BalanceOps.Add(new Mt5BalanceDeal(Login, _nextDealId++, DateTime.UtcNow, amount, comment));
     }
 }

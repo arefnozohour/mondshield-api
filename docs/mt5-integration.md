@@ -59,7 +59,74 @@ no .NET Framework bridge/sidecar is required.
 | `CreateAccountAsync` | `UserCreate` → set group/name/email/leverage/rights → `UserAdd(user, mainPwd, investorPwd)`; server auto-assigns the login |
 | `GetAccountSnapshotAsync` | `UserAccountRequest` → `Balance()` / `Equity()` / `Credit()` |
 | `GetTradeHistoryAsync` | `DealRequest(login, from, to)` → keep only `DEAL_BUY`/`DEAL_SELL`, map `Profit()` + `Commission()` |
+| `GetBalanceOperationsAsync` | `DealRequest(login, from, to)` → keep only `DEAL_BALANCE`, map `Deal()` (ticket) + `Profit()` (signed amount) + `Comment()` |
 | `CreditBalanceAsync` | `DealerBalance(login, amount, DEAL_BALANCE, comment)` (compensation payout) |
+
+## Tracking balance operations (deposits/withdrawals made directly on MT5)
+
+MT5 shows only one balance number, and money can enter or leave a login entirely outside our flows —
+a trader top-up, a manual dealer credit, or a withdrawal done in the Manager terminal. These are
+never trades; in MT5 they are `DEAL_BALANCE` deals. Reconciliation captures them so they stop
+surfacing only as anonymous "drift":
+
+1. **Capture.** `Mt5ReconciliationService` reads `GetBalanceOperationsAsync` over the same window as
+   trade history and records each new `DEAL_BALANCE` deal as an `Mt5BalanceOperation`, keyed by its
+   MT5 **deal ticket** (unique index on `(mt5_login, deal_id)`) so a deposit is never recorded twice.
+2. **Auto-attribution.** A deal whose comment starts with the MondShield marker (see `Mt5Comments`)
+   is one **we** originated — e.g. a compensation payout, already booked in the ledger by its own
+   flow — so it is recorded as `RecordedFromSystem` and NOT booked again. Everything else is
+   **external**, recorded as `PendingReview`.
+3. **Classification (admin).** Pending external ops appear at
+   `GET /api/admin/mt5/balance-operations/pending`. An admin classifies each incoming deposit into a
+   composition bucket (`POST .../{id}/classify` with `InsuredCapital` | `Compensation` | `Profit`),
+   which books the matching ledger entry and closes the drift, or `POST .../{id}/ignore` for a
+   withdrawal / non-coverage movement (handled by the profit-withdrawal flow instead).
+
+> **Why a human classifies:** the rules bucket incoming money differently — only a qualifying
+> $2,000 deposit is *insured capital*; broker-paid money is *compensation* (no coverage); the rest is
+> plain tradable funds. There is no reliable signal on the MT5 side to tell these apart, so an
+> external deposit is queued rather than guessed. The initial activation deposit is a common case:
+> it is pre-booked at onboarding, so when the real MT5 deposit lands the admin should **Ignore** the
+> pending op (it is already in the ledger) rather than classify it a second time.
+
+> ⚠️ **Schema note.** `mt5_balance_operations` is a new table. With
+> `Database:RecreateOnStartup=false` (the default outside a fresh dev DB), the startup schema build
+> is skipped once any table exists, so this table will be **missing** until the schema is rebuilt.
+> After pulling this change, either run once with `RecreateOnStartup=true` (drops & rebuilds — wipes
+> dev data) or drop the `public` schema so it regenerates. Before production this becomes a normal
+> migration.
+
+## Real-time tracking (pump/sink)
+
+By default the connection is request/response only (`PUMP_MODE_NONE`) and the hourly job is what
+reconciles. Setting `Mt5:Realtime:Enabled=true` (Live mode only) switches the connection to pump
+mode (`PUMP_MODE_USERS | PUMP_MODE_ACTIVITY`) and wires two sinks:
+
+- **`CIMTDealSink.OnDealAdd`** — fires on every new deal (trade *and* balance operation). The
+  callback copies out only the login and hands it to `Mt5RealtimeListener`.
+- **`CIMTManagerSink.OnDisconnect`** — flags a dropped connection so the listener's heartbeat
+  reconnects.
+
+`Mt5RealtimeListener` (a hosted service) debounces a burst of deals per account (`DebounceMs`) and
+then calls the **same** `IMt5ReconciliationService.ReconcileAccountAsync` the hourly job uses — so
+real-time is purely a latency win (seconds instead of up to an hour) and cannot double-book: the
+reconciler is idempotent (trade watermark + the `(mt5_login, deal_id)` unique index). The hourly job
+stays on as a backstop. One shared Manager connection is reused for both request/response and the
+pump, because a manager login typically allows only one server session.
+
+> ⚠️ **Enable only after the native connect is verified on the host.** The listener's heartbeat
+> auto-connects every `HeartbeatSeconds`. If the native `Connect` is unstable on a given host, that
+> turns an occasional failure into a crash-loop. Confirm `GET /api/admin/mt5/status` reports
+> `Connected` first, then set `Enabled=true`.
+
+> **Known issue (unresolved):** on the dev machine used so far, the native Manager `Connect` crashes
+> the **process** (hard exit, no managed exception) — reproducible even with the pump OFF, i.e. in
+> the plain request/response path, so it is a native-integration/environment problem, not the
+> real-time code. At the time it was seen: the six native/managed DLLs were present next to the exe
+> (the `win-x64` output), config loaded, and the broker was reachable (TCP 443 open). Likely
+> suspects to check on the real host: manager account API access / IP whitelist, and the native API
+> build vs. server version. Until `GET /api/admin/mt5/status` returns `Connected` on the host, none
+> of the Live paths (provisioning, payout, reconciliation, real-time) can run.
 
 ## Operational notes
 

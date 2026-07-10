@@ -73,6 +73,13 @@ public sealed class OnboardingService : IOnboardingService
 
         await _accounts.SaveChangesAsync(ct);
 
+        // Ledger (our source of truth) is committed first, then MT5 is credited so the trading
+        // account actually holds the $2,000. The comment carries the MondShield marker, so when
+        // reconciliation later reads this DEAL_BALANCE deal it recognizes it as already-booked and
+        // records it for audit only — no drift, no re-classification. If this credit fails, the
+        // ledger is intact and reconciliation surfaces the gap as drift.
+        await _mt5.CreditBalanceAsync(creation.Login, deposit, Mt5Comments.ActivationDeposit(account.Id), ct);
+
         return Result<RegisteredTraderResult>.Success(new RegisteredTraderResult(
             account.Id, creation.Login, creation.MainPassword, creation.InvestorPassword, deposit));
     }
@@ -155,6 +162,12 @@ public sealed class OnboardingService : IOnboardingService
         }, ct);
 
         await _accounts.SaveChangesAsync(ct);
+
+        // Push the confirmed deposit into MT5 so the trading account actually holds it. Same
+        // discipline as registration: ledger committed first, then MT5 credited with a
+        // MondShield-marked comment reconciliation treats as already-booked (audit only).
+        await _mt5.CreditBalanceAsync(account.Mt5Login!.Value, depositAmount, Mt5Comments.ActivationDeposit(account.Id), ct);
+
         return Result.Success();
     }
 

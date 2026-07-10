@@ -1,4 +1,5 @@
 using MondShield.Application.Accounts;
+using MondShield.Application.Mt5;
 using MondShield.Domain.Accounts;
 using MondShield.Domain.Ledger;
 using MondShield.Domain.Stages;
@@ -25,6 +26,13 @@ public interface IShieldAccountRepository
     /// </summary>
     Task<IReadOnlyList<ShieldAccount>> GetActiveWithMt5LoginAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// The id of the ACTIVE account provisioned with this MT5 login, or null if none. Used by the
+    /// real-time listener to map a pushed deal (which carries only the MT5 login) to the account to
+    /// reconcile.
+    /// </summary>
+    Task<Guid?> GetActiveAccountIdByMt5LoginAsync(long mt5Login, CancellationToken ct = default);
+
     /// <summary>An account joined to its owner's identity (email + full name). Null if not found.</summary>
     Task<AccountWithUser?> GetByIdWithUserAsync(Guid accountId, CancellationToken ct = default);
 
@@ -43,9 +51,27 @@ public interface IShieldAccountRepository
     /// <summary>Stage-transition audit rows for one account, newest first. Read-only.</summary>
     Task<IReadOnlyList<StageTransitionRecord>> GetStageTransitionsAsync(Guid accountId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The MT5 deal tickets, out of <paramref name="dealIds"/>, this account has already recorded a
+    /// balance operation for. Reconciliation uses it to skip deals it has seen before — deduping by
+    /// the immutable MT5 ticket so a deposit is never captured (or booked) twice across runs.
+    /// </summary>
+    Task<IReadOnlySet<long>> GetKnownBalanceOpDealIdsAsync(Guid accountId, IReadOnlyCollection<long> dealIds, CancellationToken ct = default);
+
+    /// <summary>Balance operations awaiting admin classification (PendingReview), joined to the owner's identity.</summary>
+    Task<IReadOnlyList<Mt5BalanceOperationView>> GetPendingBalanceOperationsAsync(CancellationToken ct = default);
+
+    /// <summary>All balance operations recorded for one account, newest first. Read-only.</summary>
+    Task<IReadOnlyList<Mt5BalanceOperation>> GetBalanceOperationsForAccountAsync(Guid accountId, CancellationToken ct = default);
+
+    /// <summary>A single balance operation by id, tracked — the caller resolves it and saves.</summary>
+    Task<Mt5BalanceOperation?> GetBalanceOperationByIdAsync(Guid operationId, CancellationToken ct = default);
+
     Task AddAsync(ShieldAccount account, CancellationToken ct = default);
 
     Task AddLedgerEntryAsync(LedgerEntry entry, CancellationToken ct = default);
+
+    Task AddBalanceOperationAsync(Mt5BalanceOperation operation, CancellationToken ct = default);
 
     Task AddStageTransitionAsync(StageTransitionRecord record, CancellationToken ct = default);
 
