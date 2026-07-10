@@ -1,6 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <!-- TargetFramework, Nullable, ImplicitUsings, LangVersion come from Directory.Build.props. -->
-  <!-- MondShield.Domain must stay dependency-free: no PackageReference / ProjectReference here. -->
-
-</Project>

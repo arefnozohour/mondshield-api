@@ -1,6 +1,0 @@
-@MondShield.Api_HostAddress = http://localhost:5259
-
-GET {{MondShield.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
